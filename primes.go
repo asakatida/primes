@@ -1,69 +1,58 @@
 package main
 
-import (
-	"container/heap"
-	"fmt"
-)
+import "log"
 
-type sieve struct {
-	next int
-	ch   chan int
-}
-
-type intHeap []sieve
-
-func (h intHeap) Len() int           { return len(h) }
-func (h intHeap) Less(i, j int) bool { return h[i].next < h[j].next }
-func (h intHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
-
-func (h *intHeap) Push(x interface{}) { *h = append(*h, x.(sieve)) }
-
-func (h *intHeap) Pop() interface{} {
-	defer func() { *h = (*h)[0 : h.Len()-1] }()
-	return (*h)[h.Len()-1]
-}
-
-func makeSieve(ch chan int, prime int) sieve {
-	counter := make(chan int, 1)
-	count := prime
-	go func() {
-		count += prime
+func runCounter(counter chan<- int, prime int) {
+	for count := prime * 2; ; count += prime {
 		counter <- count
-	}()
-	ch <- prime
-	return sieve{<-counter, counter}
+	}
 }
 
-func primes(ch chan int) {
-	h := intHeap{makeSieve(ch, 2), makeSieve(ch, 3)}
-	heap.Init(&h)
-	c := h[0].next
-	for {
-		if c != h[0].next {
-			heap.Push(&h, makeSieve(ch, c))
-		}
-		c = h[0].next
-		for c == h[0].next {
-			_N := heap.Pop(&h)
-			n := _N.(sieve)
-			c = n.next
-			heap.Push(&h, sieve{<-n.ch, n.ch})
-		}
-		c++
+func newCounter(prime int) <-chan int {
+	counter := make(chan int)
+	go runCounter(counter, prime)
+	return counter
+}
+
+func stepCounter(h map[int]<-chan int, counter <-chan int) {
+	c := <-counter
+	if h[c], counter = counter, h[c]; counter != nil {
+		go stepCounter(h, counter)
 	}
+}
+
+func insertPrime(primes chan<- int, h map[int]<-chan int, gC int) {
+	primes <- gC
+	stepCounter(h, newCounter(gC))
+}
+
+func primeStep(primes chan<- int, h map[int]<-chan int, gC int) {
+	counter := h[gC]
+	if counter == nil {
+		insertPrime(primes, h, gC)
+	} else {
+		stepCounter(h, counter)
+		delete(h, gC)
+	}
+}
+
+func primeLoop(primes chan<- int) {
+	primes <- 2
+	h := make(map[int]<-chan int)
+	for gC := 3; ; gC += 2 {
+		primeStep(primes, h, gC)
+	}
+}
+
+func makePrimes() <-chan int {
+	primes := make(chan int)
+	go primeLoop(primes)
+	return primes
 }
 
 func main() {
-	ch := make(chan int, 1)
-	go primes(ch)
-	fmt.Printf("%d\n", <-ch)
-	fmt.Printf("%d\n", <-ch)
-	fmt.Printf("%d\n", <-ch)
-	for <-ch < (1 << 16) {
-	}
-	fmt.Printf("%d\n", 1<<16)
-	fmt.Printf("%d\n", <-ch)
-	fmt.Printf("%d\n", 1<<17)
+	primes := makePrimes()
 	for {
+		log.Println(<-primes)
 	}
 }
